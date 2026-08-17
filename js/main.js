@@ -40,6 +40,12 @@ import {
   shareScore,
   refreshMenuShare,
 } from './share';
+import {
+  fetchGlobalRanks,
+  submitGlobalScore,
+  getNickname,
+  getPlayerId,
+} from './leaderboard';
 
 const COLORS = {
   paper: '#ffffff',
@@ -178,6 +184,13 @@ export default class Main {
     this.timedLeft = 0;
     this.timedBest = getNumber('v10_timed_best', 0);
     this.rankTab = 'classic'; // classic | timed
+    this.rankScope = 'local'; // local | global
+    this.globalRanks = [];
+    this.globalMyRank = null;
+    this.globalMyScore = null;
+    this.globalStatus = 'idle'; // idle | loading | ok | error
+    this.globalError = '';
+    this.globalFetchToken = 0;
     this.taskTab = 'daily'; // daily | achieve
     this.taskScroll = 0;
     this.taskScrollMax = 0;
@@ -425,13 +438,26 @@ export default class Main {
         break;
       case 'open_rank':
         this.rankTab = 'classic';
+        this.rankScope = 'local';
         this.showPanel('rank');
+        break;
+      case 'rank_scope_local':
+        this.rankScope = 'local';
+        break;
+      case 'rank_scope_global':
+        this.rankScope = 'global';
+        this.loadGlobalRanks(true);
         break;
       case 'rank_tab_classic':
         this.rankTab = 'classic';
+        if (this.rankScope === 'global') this.loadGlobalRanks(true);
         break;
       case 'rank_tab_timed':
         this.rankTab = 'timed';
+        if (this.rankScope === 'global') this.loadGlobalRanks(true);
+        break;
+      case 'rank_refresh':
+        if (this.rankScope === 'global') this.loadGlobalRanks(true);
         break;
       case 'open_skin':
         this.showPanel('skin');
@@ -732,15 +758,23 @@ export default class Main {
     const playedAt = Date.now();
     const duration = Math.max(0, playedAt - (this.runStartedAt || playedAt));
     const rankMode = this.mode === 'timed' ? 'timed' : 'classic';
+    const round = Math.max(0, this.round - 1);
     saveRankRecord(rankMode, {
       score: this.score,
       combo: this.maxCombo,
-      round: Math.max(0, this.round - 1),
+      round,
       at: playedAt,
       duration,
       mode: this.mode,
     });
     this.pendingRank = false;
+    // 全球榜：异步上报，不阻断结算
+    submitGlobalScore({
+      mode: rankMode,
+      score: this.score,
+      combo: this.maxCombo,
+      round,
+    }).catch(() => {});
     // 任务进度（以最终结算为准）
     recordRun({
       mode: this.mode,
@@ -751,6 +785,33 @@ export default class Main {
       timedBest: this.timedBest,
       skinsUnlocked: this.unlockedSkins().length,
     });
+  }
+
+  loadGlobalRanks(force = false) {
+    if (this.rankScope !== 'global' && !force) return;
+    if (this.globalStatus === 'loading' && !force) return;
+    const token = ++this.globalFetchToken;
+    this.globalStatus = 'loading';
+    this.globalError = '';
+    getPlayerId();
+    getNickname();
+    fetchGlobalRanks(this.rankTab)
+      .then((res) => {
+        if (token !== this.globalFetchToken) return;
+        this.globalRanks = (res && res.list) || [];
+        this.globalMyRank = res ? res.myRank : null;
+        this.globalMyScore = res ? res.myScore : null;
+        this.globalStatus = 'ok';
+      })
+      .catch((err) => {
+        if (token !== this.globalFetchToken) return;
+        this.globalRanks = [];
+        this.globalMyRank = null;
+        this.globalMyScore = null;
+        this.globalStatus = 'error';
+        this.globalError =
+          (err && err.message) || '加载失败，请检查网络或云端表是否已创建';
+      });
   }
 
   commitPendingRank() {
@@ -1052,7 +1113,7 @@ export default class Main {
         id: 'open_rank',
         icon: 'rank',
         title: '排行榜',
-        sub: `本地 · 经典 ${this.best} / 限时 ${this.timedBest}`,
+        sub: `本地 / 全球 · 经典 ${this.best}`,
         gold: false,
         x: PAD,
         y: cy + cardH + gap,
@@ -1622,10 +1683,39 @@ export default class Main {
   }
 
   drawRankPanel() {
-    let y = this.drawPanelChrome('排行榜', '仅本地记录，按模式分别统计最高分。');
+    const scopeLabel =
+      this.rankScope === 'global' ? '全球排行，按最高分取前 30 名。' : '本地记录，按模式分别统计最高分。';
+    let y = this.drawPanelChrome('排行榜', scopeLabel);
 
-    // 模式切换
-    const tabH = Math.round(36 * SCALE);
+    // 本地 / 全球
+    const scopeH = Math.round(34 * SCALE);
+    const scopeW = (W - PAD * 2 - 8) / 2;
+    const scopes = [
+      { id: 'rank_scope_local', key: 'local', label: '本地' },
+      { id: 'rank_scope_global', key: 'global', label: '全球' },
+    ];
+    for (let i = 0; i < scopes.length; i++) {
+      const t = scopes[i];
+      const tx = PAD + i * (scopeW + 8);
+      const active = this.rankScope === t.key;
+      const tabPressed = this.beginPressTransform(tx, y, scopeW, scopeH, t.id);
+      let bg = active ? COLORS.ink : COLORS.paper;
+      if (tabPressed) bg = active ? '#000000' : '#f0f0ec';
+      fillRound(tx, y, scopeW, scopeH, 11, bg);
+      if (!active) strokeRound(tx, y, scopeW, scopeH, 11, COLORS.line);
+      ctx.fillStyle = active ? '#ffffff' : '#666666';
+      ctx.font = font(800, 12);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(t.label, tx + scopeW / 2, y + scopeH / 2);
+      ctx.textBaseline = 'alphabetic';
+      this.endPressTransform(tabPressed);
+      this.addBtn(t.id, tx, y, scopeW, scopeH);
+    }
+    y += scopeH + Math.round(10 * SCALE);
+
+    // 经典 / 限时
+    const tabH = Math.round(34 * SCALE);
     const tabW = (W - PAD * 2 - 8) / 2;
     const tabs = [
       { id: 'rank_tab_classic', key: 'classic', label: '经典模式' },
@@ -1638,8 +1728,8 @@ export default class Main {
       const tabPressed = this.beginPressTransform(tx, y, tabW, tabH, t.id);
       let bg = active ? COLORS.ink : COLORS.paper;
       if (tabPressed) bg = active ? '#000000' : '#f0f0ec';
-      fillRound(tx, y, tabW, tabH, 12, bg);
-      if (!active) strokeRound(tx, y, tabW, tabH, 12, COLORS.line);
+      fillRound(tx, y, tabW, tabH, 11, bg);
+      if (!active) strokeRound(tx, y, tabW, tabH, 11, COLORS.line);
       ctx.fillStyle = active ? '#ffffff' : '#666666';
       ctx.font = font(800, 12);
       ctx.textAlign = 'center';
@@ -1651,11 +1741,17 @@ export default class Main {
     }
     y += tabH + Math.round(12 * SCALE);
 
-    const ranks = loadRanks(this.rankTab);
-    const bestScore =
-      this.rankTab === 'timed' ? this.timedBest : this.best;
+    if (this.rankScope === 'global') {
+      this.drawGlobalRankList(y);
+    } else {
+      this.drawLocalRankList(y);
+    }
+  }
 
-    // 摘要条
+  drawLocalRankList(y) {
+    const ranks = loadRanks(this.rankTab);
+    const bestScore = this.rankTab === 'timed' ? this.timedBest : this.best;
+
     const summaryH = Math.round(58 * SCALE);
     fillRound(PAD, y, W - PAD * 2, summaryH, 14, this.rankTab === 'timed' ? '#fffdf7' : COLORS.paper);
     strokeRound(
@@ -1702,45 +1798,171 @@ export default class Main {
       const r = show[i];
       const ry = y + i * (rowH + 8);
       if (ry + rowH > listBottom) break;
+      this.drawRankRow(ry, rowH, i + 1, String(r.score || 0), this.localRankSub(r), formatPlayAt(r.at), false);
+    }
+  }
 
-      fillRound(PAD, ry, W - PAD * 2, rowH, 14, COLORS.paper);
-      strokeRound(PAD, ry, W - PAD * 2, rowH, 14, COLORS.line);
+  localRankSub(r) {
+    const subBits = [];
+    if (r.combo) subBits.push(`连击 ×${r.combo}`);
+    if (r.round) subBits.push(`${r.round} 回合`);
+    if (this.rankTab === 'timed') subBits.push('1 分钟');
+    else if (r.mode === 'daily') subBits.push('每日挑战');
+    else if (r.duration) subBits.push(`用时 ${formatTime(r.duration)}`);
+    return subBits.join(' · ') || '本地成绩';
+  }
 
-      // 名次圆点
-      const badge = Math.round(28 * SCALE);
-      const bx = PAD + 14;
-      const by = ry + (rowH - badge) / 2;
-      const badgeColor = i === 0 ? COLORS.gold : i === 1 ? '#8a8a84' : i === 2 ? '#b08968' : '#ecece8';
-      const badgeText = i < 3 ? '#ffffff' : COLORS.ink;
-      fillRound(bx, by, badge, badge, badge / 2, badgeColor);
-      ctx.fillStyle = badgeText;
-      ctx.font = font(800, 12);
+  drawGlobalRankList(y) {
+    const summaryH = Math.round(58 * SCALE);
+    fillRound(PAD, y, W - PAD * 2, summaryH, 14, '#fffdf7');
+    strokeRound(PAD, y, W - PAD * 2, summaryH, 14, '#eadfbf');
+    ctx.fillStyle = '#999999';
+    ctx.font = font(500, 10);
+    ctx.textAlign = 'left';
+    ctx.fillText(getNickname(), PAD + 14, y + Math.round(20 * SCALE));
+    ctx.fillStyle = COLORS.ink;
+    ctx.font = font(900, 18);
+    const myLine =
+      this.globalStatus === 'loading'
+        ? '同步中…'
+        : this.globalMyRank
+          ? `全球第 ${this.globalMyRank} · ${this.globalMyScore || 0} 分`
+          : this.globalMyScore != null
+            ? `我的最高 ${this.globalMyScore} 分`
+            : '暂未上榜';
+    ctx.fillText(myLine, PAD + 14, y + Math.round(44 * SCALE));
+
+    const refreshW = Math.round(72 * SCALE);
+    const refreshH = Math.round(28 * SCALE);
+    const rx = W - PAD - refreshW - 8;
+    const ry = y + (summaryH - refreshH) / 2;
+    const refreshPressed = this.beginPressTransform(rx, ry, refreshW, refreshH, 'rank_refresh');
+    fillRound(rx, ry, refreshW, refreshH, 10, refreshPressed ? '#f0f0ec' : COLORS.paper);
+    strokeRound(rx, ry, refreshW, refreshH, 10, COLORS.line);
+    ctx.fillStyle = COLORS.ink;
+    ctx.font = font(800, 11);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(this.globalStatus === 'loading' ? '…' : '刷新', rx + refreshW / 2, ry + refreshH / 2);
+    ctx.textBaseline = 'alphabetic';
+    this.endPressTransform(refreshPressed);
+    this.addBtn('rank_refresh', rx, ry, refreshW, refreshH);
+    y += summaryH + Math.round(10 * SCALE);
+
+    const listBottom = H - SAFE_BOTTOM - Math.round(16 * SCALE);
+    const rowH = Math.round(62 * SCALE);
+
+    if (this.globalStatus === 'loading' && !this.globalRanks.length) {
+      fillRound(PAD, y, W - PAD * 2, Math.round(120 * SCALE), 16, COLORS.paper);
+      strokeRound(PAD, y, W - PAD * 2, Math.round(120 * SCALE), 16, COLORS.line);
+      ctx.fillStyle = '#aaaaaa';
+      ctx.font = font(500, 13);
       ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(String(i + 1), bx + badge / 2, by + badge / 2);
-      ctx.textBaseline = 'alphabetic';
+      ctx.fillText('正在加载全球排行…', W / 2, y + Math.round(62 * SCALE));
+      return;
+    }
 
-      // 分数 + 附注
-      ctx.fillStyle = COLORS.ink;
-      ctx.font = font(900, 20);
-      ctx.textAlign = 'left';
-      ctx.fillText(String(r.score || 0), bx + badge + 12, ry + Math.round(28 * SCALE));
-      ctx.fillStyle = '#999999';
+    if (this.globalStatus === 'error') {
+      const boxH = Math.round(178 * SCALE);
+      const btnH = Math.round(40 * SCALE);
+      const btnY = y + boxH - Math.round(18 * SCALE) - btnH;
+      fillRound(PAD, y, W - PAD * 2, boxH, 16, COLORS.paper);
+      strokeRound(PAD, y, W - PAD * 2, boxH, 16, COLORS.line);
+
+      ctx.fillStyle = COLORS.red;
+      ctx.font = font(700, 14);
+      ctx.textAlign = 'center';
+      ctx.fillText('全球榜暂时不可用', W / 2, y + Math.round(36 * SCALE));
+
+      ctx.fillStyle = '#888888';
+      ctx.font = font(400, 11);
+      const raw = String(this.globalError || '');
+      let tip = '请稍后重试';
+      let hint = '检查网络后点下方重新加载';
+      if (/domain list|合法域名|url not in/i.test(raw)) {
+        tip = '请求域名未配置';
+        hint = '开发者工具可勾选不校验合法域名';
+      } else if (/supabase-leaderboard|relation|does not exist|42P01/i.test(raw)) {
+        tip = '云端表未就绪';
+        hint = '请执行 docs/supabase-leaderboard.sql';
+      } else if (raw) {
+        tip = raw.length > 28 ? `${raw.slice(0, 28)}…` : raw;
+      }
+      ctx.fillText(tip, W / 2, y + Math.round(64 * SCALE));
+      ctx.fillStyle = '#aaaaaa';
       ctx.font = font(400, 10);
+      ctx.fillText(hint, W / 2, y + Math.round(86 * SCALE));
+
+      this.drawBtn('重新加载', PAD + 36, btnY, W - PAD * 2 - 72, btnH, 'rank_refresh', 'light');
+      return;
+    }
+
+    const show = this.globalRanks;
+    if (!show.length) {
+      fillRound(PAD, y, W - PAD * 2, Math.round(120 * SCALE), 16, COLORS.paper);
+      strokeRound(PAD, y, W - PAD * 2, Math.round(120 * SCALE), 16, COLORS.line);
+      drawIconCenter(ctx, 'rank', W / 2, y + Math.round(42 * SCALE), Math.round(28 * SCALE), '#cccccc');
+      ctx.fillStyle = '#aaaaaa';
+      ctx.font = font(500, 13);
+      ctx.textAlign = 'center';
+      ctx.fillText('暂无全球记录', W / 2, y + Math.round(78 * SCALE));
+      ctx.font = font(400, 11);
+      ctx.fillText('结算后会自动上传最高分', W / 2, y + Math.round(98 * SCALE));
+      return;
+    }
+
+    const me = getPlayerId();
+    const maxRows = Math.max(1, Math.floor((listBottom - y) / (rowH + 8)));
+    for (let i = 0; i < Math.min(show.length, maxRows); i++) {
+      const r = show[i];
+      const ry = y + i * (rowH + 8);
+      if (ry + rowH > listBottom) break;
+      const mine = r.player_id === me;
       const subBits = [];
       if (r.combo) subBits.push(`连击 ×${r.combo}`);
       if (r.round) subBits.push(`${r.round} 回合`);
-      if (this.rankTab === 'timed') subBits.push('1 分钟');
-      else if (r.mode === 'daily') subBits.push('每日挑战');
-      else if (r.duration) subBits.push(`用时 ${formatTime(r.duration)}`);
-      ctx.fillText(subBits.join(' · ') || '本地成绩', bx + badge + 12, ry + Math.round(46 * SCALE));
-
-      // 游玩时间
-      ctx.fillStyle = '#aaaaaa';
-      ctx.font = font(500, 11);
-      ctx.textAlign = 'right';
-      ctx.fillText(formatPlayAt(r.at), W - PAD - 14, ry + Math.round(36 * SCALE));
+      if (mine) subBits.push('我');
+      this.drawRankRow(
+        ry,
+        rowH,
+        i + 1,
+        String(r.score || 0),
+        subBits.join(' · ') || '全球成绩',
+        r.nickname || '匿名玩家',
+        mine
+      );
     }
+  }
+
+  drawRankRow(ry, rowH, rank, scoreText, subText, rightText, highlight) {
+    fillRound(PAD, ry, W - PAD * 2, rowH, 14, highlight ? '#fffdf7' : COLORS.paper);
+    strokeRound(PAD, ry, W - PAD * 2, rowH, 14, highlight ? '#eadfbf' : COLORS.line);
+
+    const badge = Math.round(28 * SCALE);
+    const bx = PAD + 14;
+    const by = ry + (rowH - badge) / 2;
+    const badgeColor = rank === 1 ? COLORS.gold : rank === 2 ? '#8a8a84' : rank === 3 ? '#b08968' : '#ecece8';
+    const badgeText = rank <= 3 ? '#ffffff' : COLORS.ink;
+    fillRound(bx, by, badge, badge, badge / 2, badgeColor);
+    ctx.fillStyle = badgeText;
+    ctx.font = font(800, 12);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(rank), bx + badge / 2, by + badge / 2);
+    ctx.textBaseline = 'alphabetic';
+
+    ctx.fillStyle = COLORS.ink;
+    ctx.font = font(900, 20);
+    ctx.textAlign = 'left';
+    ctx.fillText(scoreText, bx + badge + 12, ry + Math.round(28 * SCALE));
+    ctx.fillStyle = '#999999';
+    ctx.font = font(400, 10);
+    ctx.fillText(subText, bx + badge + 12, ry + Math.round(46 * SCALE));
+
+    ctx.fillStyle = '#aaaaaa';
+    ctx.font = font(500, 11);
+    ctx.textAlign = 'right';
+    ctx.fillText(String(rightText || ''), W - PAD - 14, ry + Math.round(36 * SCALE));
   }
 
   drawSkinPanel() {
