@@ -12,7 +12,18 @@ import {
   touchPoint,
 } from './render';
 import { getItem, setItem, getNumber, getJSON, setJSON } from './storage';
-import { beep, resumeAudio, unlockAudio } from './audio';
+import {
+  beep,
+  missBeep,
+  endBeep,
+  resumeAudio,
+  unlockAudio,
+  startBgm,
+  stopBgm,
+  pauseBgm,
+  fadeOutBgm,
+  setSoundEnabled,
+} from './audio';
 import { drawIcon, drawIconCenter } from './icons';
 import {
   buildContext,
@@ -22,6 +33,13 @@ import {
   dailyProgress,
   claimTask,
 } from './tasks';
+import {
+  initShare,
+  shareIntro,
+  shareHome,
+  shareScore,
+  refreshMenuShare,
+} from './share';
 
 const COLORS = {
   paper: '#ffffff',
@@ -142,7 +160,7 @@ function hitRect(px, py, r) {
 export default class Main {
   constructor() {
     this.gameState = 'home'; // home | playing | paused | result | panel
-    this.panel = ''; // daily | task | rank | skin | reward | ''
+    this.panel = ''; // daily | task | rank | skin | reward | intro | ''
     this.score = 0;
     this.combo = 0;
     this.maxCombo = 0;
@@ -194,6 +212,8 @@ export default class Main {
 
     this.bindInput();
     this.bindLifecycle();
+    initShare();
+    refreshMenuShare();
     this.loop = this.loop.bind(this);
     requestAnimationFrame(this.loop);
   }
@@ -239,8 +259,10 @@ export default class Main {
     wx.onShow(() => {
       this.lastWall = Date.now();
       if (this.soundOn) resumeAudio(true);
+      if (this.soundOn && this.gameState === 'playing') startBgm(true);
     });
     wx.onHide(() => {
+      pauseBgm();
       if (this.gameState === 'playing') this.pauseGame();
     });
   }
@@ -417,10 +439,29 @@ export default class Main {
       case 'open_reward':
         this.openReward();
         break;
+      case 'open_intro':
+        this.showPanel('intro');
+        break;
+      case 'share_home':
+        if (!shareHome()) this.toast('暂时无法分享', '#999999');
+        else this.toast('选择好友分享吧', COLORS.gold);
+        break;
+      case 'share_intro':
+        if (!shareIntro()) this.toast('暂时无法分享', '#999999');
+        else this.toast('把玩法分享给好友', COLORS.gold);
+        break;
+      case 'share_result':
+        if (!shareScore(this.score, this.mode)) this.toast('暂时无法分享', '#999999');
+        else this.toast('分享本局成绩', COLORS.gold);
+        break;
       case 'sound':
         this.soundOn = !this.soundOn;
         setItem('v10_sound', this.soundOn ? '1' : '0');
-        if (this.soundOn) beep(true, 650, 0.05);
+        setSoundEnabled(this.soundOn);
+        if (this.soundOn) {
+          beep(true, 650, 0.05);
+          if (this.gameState === 'playing') startBgm(true);
+        }
         break;
       case 'daily_play':
         this.startGame('daily');
@@ -494,11 +535,13 @@ export default class Main {
   }
 
   showHome() {
+    stopBgm();
     this.gameState = 'home';
     this.panel = '';
     this.target = null;
     this.spawnAt = 0;
     this.reviveCountdown = 0;
+    refreshMenuShare();
   }
 
   showPanel(name) {
@@ -557,6 +600,7 @@ export default class Main {
     this.gameState = 'playing';
     this.panel = '';
     this.runStartedAt = Date.now();
+    startBgm(this.soundOn);
     if (this.mode === 'timed') {
       this.flashBanner('限时 1 分钟', COLORS.gold);
       this.toast('未命中不计分', COLORS.muted);
@@ -605,7 +649,7 @@ export default class Main {
     this.combo = 0;
     this.target = null;
     this.toast(reason, '#999999');
-    beep(this.soundOn, 180, 0.06, 'sine', 0.015);
+    missBeep(this.soundOn);
     this.spawnAt = this.gameTime + 140;
   }
 
@@ -617,6 +661,7 @@ export default class Main {
       if (this.mode === 'timed') {
         this.missTarget('未命中');
       } else {
+        // 结束局只用柔和结算音 + BGM 淡出，避免先急促 miss 再淡出
         this.endGame();
       }
       return;
@@ -655,6 +700,7 @@ export default class Main {
     this.gameState = 'result';
     this.target = null;
     this.spawnAt = 0;
+    fadeOutBgm();
 
     if (this.mode === 'timed') {
       this.oldBest = this.timedBest;
@@ -678,7 +724,8 @@ export default class Main {
       else this.pendingRank = true;
     }
     this.shake = 7;
-    beep(this.soundOn, 100, 0.15, 'sine', 0.025);
+    endBeep(this.soundOn);
+    refreshMenuShare(this.score, this.mode);
   }
 
   commitRankRecord() {
@@ -740,6 +787,7 @@ export default class Main {
       this.gameState = 'playing';
       this.combo = Math.floor(this.combo * 0.65);
       this.target = null;
+      startBgm(this.soundOn);
       this.spawnTarget();
       this.toast('继续！', COLORS.green);
       return;
@@ -751,6 +799,7 @@ export default class Main {
   pauseGame() {
     if (this.gameState !== 'playing') return;
     this.gameState = 'paused';
+    pauseBgm();
     if (this.target) this.target.pausedAge = this.gameTime - this.target.born;
     if (this.spawnAt > 0) {
       this.spawnPauseRemain = Math.max(0, this.spawnAt - this.gameTime);
@@ -763,6 +812,7 @@ export default class Main {
   resumeGame() {
     if (this.gameState !== 'paused') return;
     this.gameState = 'playing';
+    startBgm(this.soundOn);
     if (this.target && this.target.pausedAge != null) {
       this.target.born = this.gameTime - this.target.pausedAge;
       this.target.pausedAge = null;
@@ -928,9 +978,10 @@ export default class Main {
     ctx.textBaseline = 'alphabetic';
 
     // hero — 垂直居中偏上，底部留给卡片
-    const cardsBlockH = Math.round(52 + 9 + 44 + 14 + 73 * 2 + 9 + 56 + 9 + 28) * SCALE;
+    const cardsBlockH =
+      Math.round(52 + 9 + 44 + 14 + 73 * 2 + 9 + 56 + 9 + 56 + 9 + 12) * SCALE;
     const heroBottom = bottom - cardsBlockH - Math.round(8 * SCALE);
-    const heroCenter = Math.min(H * 0.36, (top + 50 + heroBottom) / 2);
+    const heroCenter = Math.min(H * 0.32, (top + 50 + heroBottom) / 2);
 
     ctx.fillStyle = '#aaaaaa';
     ctx.font = font(500, 9);
@@ -967,7 +1018,8 @@ export default class Main {
     const cardH = Math.round(73 * SCALE);
     let cy = playY + playH + 9 + timedH + Math.round(14 * SCALE);
     // 若溢出，整体上移卡片区
-    const needBottom = cy + cardH * 2 + gap + Math.round(56 * SCALE) + gap + Math.round(20 * SCALE);
+    const needBottom =
+      cy + cardH * 2 + gap + Math.round(56 * SCALE) + gap + Math.round(56 * SCALE) + gap;
     if (needBottom > bottom) {
       cy -= needBottom - bottom;
     }
@@ -1036,10 +1088,18 @@ export default class Main {
       this.soundOn ? 'soundOn' : 'soundOff'
     );
 
-    ctx.fillStyle = '#b1b1ab';
-    ctx.font = font(400, 9);
-    ctx.textAlign = 'center';
-    ctx.fillText('离线可玩 · 本地存档 · 第十版', W / 2, Math.min(smY + smH + Math.round(18 * SCALE), bottom));
+    const shareY = smY + smH + gap;
+    this.drawHomeSmallCard('open_intro', PAD, shareY, smW, smH, '游戏介绍', '玩法说明', 'info');
+    this.drawHomeSmallCard(
+      'share_home',
+      PAD + smW + gap,
+      shareY,
+      smW,
+      smH,
+      '分享好友',
+      '邀请一起玩',
+      'share'
+    );
   }
 
   drawHud() {
@@ -1209,10 +1269,14 @@ export default class Main {
         ctx.fillText('最高连击', x + pad + sw / 2, cy + Math.round(38 * SCALE));
         ctx.fillText('完成回合', x + pad + sw + gap + sw / 2, cy + Math.round(38 * SCALE));
       });
-      cy += statH + Math.round(12 * SCALE);
+      cy += statH + Math.round(18 * SCALE);
 
-      const btnH = Math.round(44 * SCALE);
+      const btnH = Math.round(46 * SCALE);
+      const btnGap = Math.round(10 * SCALE);
+      const rowGap = Math.round(12 * SCALE);
       const canRevive = this.mode !== 'timed' && this.revivesUsed < REVIVE_MAX;
+
+      // 主操作：复活（可选）+ 重开，次要操作并排，减少纵向拥挤
       if (canRevive) {
         if (!measureOnly) {
           const left = REVIVE_MAX - this.revivesUsed;
@@ -1222,16 +1286,20 @@ export default class Main {
               : `立即复活 · 金币不足（需 ${REVIVE_COST}）`;
           this.drawBtn(label, x + pad, cy, innerW, btnH, 'revive', 'gold');
         }
-        cy += btnH + 8;
+        cy += btnH + btnGap;
       }
       if (!measureOnly) {
         this.drawBtn('重新开始', x + pad, cy, innerW, btnH, 'again', 'dark');
       }
-      cy += btnH + 8;
+      cy += btnH + rowGap;
+
+      const halfW = (innerW - gap) / 2;
+      const subH = Math.round(42 * SCALE);
       if (!measureOnly) {
-        this.drawBtn('返回首页', x + pad, cy, innerW, btnH, 'result_home', 'light');
+        this.drawBtn('分享成绩', x + pad, cy, halfW, subH, 'share_result', 'light');
+        this.drawBtn('返回首页', x + pad + halfW + gap, cy, halfW, subH, 'result_home', 'light');
       }
-      cy += btnH + pad;
+      cy += subH + pad;
       metrics.h = cy - y;
     });
   }
@@ -1302,6 +1370,63 @@ export default class Main {
     ctx.textAlign = 'left';
     ctx.fillText(desc, PAD, top + Math.round(56 * SCALE));
     return top + Math.round(78 * SCALE);
+  }
+
+  drawIntroPanel() {
+    let y = this.drawPanelChrome('游戏介绍', '差一点点就完美。把玩法告诉好友一起挑战。');
+    const boxH = Math.round(278 * SCALE);
+    fillRound(PAD, y, W - PAD * 2, boxH, 16, COLORS.paper);
+    strokeRound(PAD, y, W - PAD * 2, boxH, 16, COLORS.line);
+
+    const lines = [
+      { t: '怎么玩', c: COLORS.ink, w: 800, s: 13 },
+      { t: '圆环从大变小，在合适时机点击靠近圆心。', c: '#666666', w: 400, s: 11 },
+      { t: '越接近中心，得分越高；点空或错过即结束。', c: '#666666', w: 400, s: 11 },
+      { t: '', c: COLORS.ink, w: 400, s: 8 },
+      { t: '模式', c: COLORS.ink, w: 800, s: 13 },
+      { t: '经典：一点即终，可用金币复活。', c: '#666666', w: 400, s: 11 },
+      { t: '限时：1 分钟冲分，未命中不计分。', c: '#666666', w: 400, s: 11 },
+      { t: '每日挑战：更高难度，冲击今日最高。', c: '#666666', w: 400, s: 11 },
+      { t: '', c: COLORS.ink, w: 400, s: 8 },
+      { t: '特殊', c: COLORS.ink, w: 800, s: 13 },
+      { t: '连击提升倍率；达到节点触发狂热 ×2。', c: '#666666', w: 400, s: 11 },
+      { t: '经典每 10 回合出现首领，击破奖励更高。', c: '#666666', w: 400, s: 11 },
+    ];
+
+    let ly = y + Math.round(22 * SCALE);
+    ctx.textAlign = 'left';
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.t) {
+        ly += Math.round(line.s * SCALE);
+        continue;
+      }
+      ctx.fillStyle = line.c;
+      ctx.font = font(line.w, line.s);
+      ctx.fillText(line.t, PAD + 16, ly);
+      ly += Math.round((line.s + 10) * SCALE);
+    }
+
+    y += boxH + Math.round(14 * SCALE);
+    this.drawBtn(
+      '分享给好友',
+      PAD,
+      y,
+      W - PAD * 2,
+      Math.round(48 * SCALE),
+      'share_intro',
+      'gold'
+    );
+    y += Math.round(48 * SCALE) + 10;
+    this.drawBtn(
+      '开始挑战',
+      PAD,
+      y,
+      W - PAD * 2,
+      Math.round(48 * SCALE),
+      'play',
+      'dark'
+    );
   }
 
   drawDailyPanel() {
@@ -1881,6 +2006,7 @@ export default class Main {
       else if (this.panel === 'task') this.drawTaskPanel();
       else if (this.panel === 'rank') this.drawRankPanel();
       else if (this.panel === 'skin') this.drawSkinPanel();
+      else if (this.panel === 'intro') this.drawIntroPanel();
       else if (this.panel === 'reward') {
         this.drawHome();
         this.buttons = [];

@@ -200,6 +200,37 @@ function drawCircle(ctx, size, color) {
   });
 }
 
+function drawShare(ctx, size, color) {
+  strokeIcon(ctx, size, color, 1.8, () => {
+    ctx.beginPath();
+    ctx.arc(18, 5, 2.4, 0, Math.PI * 2);
+    ctx.arc(18, 19, 2.4, 0, Math.PI * 2);
+    ctx.arc(6, 12, 2.4, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(8.2, 10.8);
+    ctx.lineTo(15.8, 6.2);
+    ctx.moveTo(8.2, 13.2);
+    ctx.lineTo(15.8, 17.8);
+    ctx.stroke();
+  });
+}
+
+function drawInfo(ctx, size, color) {
+  strokeIcon(ctx, size, color, 1.8, () => {
+    ctx.beginPath();
+    ctx.arc(12, 12, 8.5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(12, 10.5);
+    ctx.lineTo(12, 16.5);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(12, 7.6, 0.9, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
 const DRAWERS = {
   coin: drawCoin,
   gift: drawGift,
@@ -214,6 +245,8 @@ const DRAWERS = {
   back: drawBack,
   check: drawCheck,
   circle: drawCircle,
+  share: drawShare,
+  info: drawInfo,
 };
 
 /**
