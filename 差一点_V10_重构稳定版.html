@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#f5f5f2">
+<title>差一点 V10</title>
+<style>
+:root{--bg:#f5f5f2;--paper:#fff;--ink:#171717;--muted:#999993;--line:#e3e3de;--gold:#b78920;--red:#c85a61;--green:#638d72}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink)}
+button{font:inherit}
+#app{width:min(100vw,520px);height:100dvh;margin:auto;position:relative;overflow:hidden;background:var(--bg)}
+.hidden{display:none!important}
+button{cursor:pointer}
+#gameCanvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+
+/* ---------- HOME ---------- */
+.home{position:absolute;inset:0;padding:calc(22px + env(safe-area-inset-top)) 18px calc(18px + env(safe-area-inset-bottom));display:flex;flex-direction:column}
+.homeTop{display:flex;justify-content:space-between;align-items:flex-start}
+.statLabel{font-size:8px;color:#aaa;letter-spacing:1.8px}.bestValue{font-size:24px;font-weight:900;letter-spacing:-1px}
+.coin{display:flex;align-items:center;gap:7px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px 11px;font-size:12px;font-weight:850}
+.coinDot{width:8px;height:8px;border-radius:50%;background:var(--gold)}
+.hero{margin:auto 0 19px;text-align:center}
+.eyebrow{font-size:8px;color:#aaa;letter-spacing:3px}
+.hero h1{font-size:62px;line-height:.95;letter-spacing:-5px;margin:9px 0 13px;font-weight:950}
+.hero p{margin:0;color:#999;font-size:12px;line-height:1.8}
+.primary{width:100%;border:0;border-radius:17px;background:#171717;color:#fff;padding:17px;font-size:15px;font-weight:900;margin-top:20px;box-shadow:0 10px 26px #00000010}
+.primary:active{transform:scale(.985)}
+.homeGrid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.homeCard{border:1px solid var(--line);background:#fff;border-radius:16px;padding:13px;min-height:73px;text-align:left}
+.homeCard:active{transform:scale(.985)}
+.homeCard.gold{background:#fffdf7;border-color:#eadfbf}
+.homeCard b{font-size:13px}.homeCard span{display:block;color:#aaa;font-size:9px;margin-top:5px}
+.homeBottom{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:9px}
+.smallCard{border:1px solid var(--line);background:#fff;border-radius:13px;padding:11px;text-align:center;color:#777;font-size:10px}
+.smallCard b{display:block;color:#171717;font-size:12px;margin-bottom:3px}
+.homeFoot{text-align:center;color:#b1b1ab;font-size:8px;margin-top:10px}
+
+/* ---------- GAME HUD ---------- */
+.hud{position:absolute;inset:0;pointer-events:none}
+.hudTop{display:flex;justify-content:space-between;padding:calc(16px + env(safe-area-inset-top)) 20px 0}
+.hudCell{min-width:70px}.hudCell.right{text-align:right}
+.hudLabel{font-size:8px;letter-spacing:1.6px;color:#aaa}.hudValue{font-size:20px;font-weight:900}.hudScore{font-size:29px;letter-spacing:-1px}
+.track{position:absolute;left:20px;right:20px;top:calc(80px + env(safe-area-inset-top));height:3px;background:var(--line);border-radius:4px;overflow:hidden}.track i{display:block;height:100%;width:0;background:#171717}
+.frenzyTrack{position:absolute;left:20px;right:20px;top:calc(88px + env(safe-area-inset-top));height:3px;background:#eadfbf;border-radius:4px;opacity:0}.frenzyTrack i{display:block;height:100%;width:0;background:var(--gold)}
+.pauseBtn{position:absolute;right:18px;top:calc(100px + env(safe-area-inset-top));width:35px;height:35px;border:1px solid var(--line);border-radius:11px;background:#fff;font-weight:900;pointer-events:auto}
+.toast{position:absolute;top:31%;width:100%;text-align:center;font-size:22px;font-weight:950;opacity:0;pointer-events:none}.toast.show{animation:toast .68s ease-out forwards}
+@keyframes toast{0%{opacity:0;transform:translateY(12px)}18%{opacity:1}100%{opacity:0;transform:translateY(-48px)}}
+.flashTitle{position:absolute;top:18%;width:100%;text-align:center;font-size:11px;font-weight:950;letter-spacing:4px;opacity:0;pointer-events:none}.flashTitle.show{animation:flash .85s ease-out forwards}.goldTitle{color:var(--gold)}.redTitle{color:var(--red)}
+@keyframes flash{0%{opacity:0;transform:scale(.82)}25%{opacity:1;transform:scale(1.06)}100%{opacity:0;transform:scale(1)}}
+
+/* ---------- OVERLAYS ---------- */
+.centerOverlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:20px;pointer-events:none}
+.overlayCard{width:100%;max-width:390px;background:rgba(255,255,255,.97);border:1px solid var(--line);border-radius:20px;padding:23px;text-align:center;box-shadow:0 20px 70px #00000012;pointer-events:auto}
+.overlayCard .small{font-size:8px;color:#aaa;letter-spacing:2px}.overlayCard h2{font-size:18px;margin:7px 0}.bigScore{font-size:72px;font-weight:950;letter-spacing:-5px;line-height:1}.subText{font-size:11px;color:#999;line-height:1.7}
+.btn{border:0;border-radius:13px;padding:13px 18px;font-size:12px;font-weight:850;margin-top:8px}.btnDark{background:#171717;color:#fff}.btnGold{background:var(--gold);color:#fff}.btnLight{background:#fff;border:1px solid var(--line);color:#333}
+.resultStats{display:flex;gap:7px;margin-top:12px}.resultStat{flex:1;background:#fafaf8;border:1px solid var(--line);border-radius:12px;padding:9px}.resultStat b{display:block;font-size:16px}.resultStat span{font-size:8px;color:#aaa}
+.resultNear{margin-top:10px;padding:10px;background:#fafaf8;border-radius:12px;font-size:10px;color:#888}.resultNear b{display:block;color:#171717;font-size:15px;margin-top:3px}
+
+/* ---------- DIRECT ACCESS PANELS ---------- */
+.panel{position:absolute;inset:0;background:var(--bg);padding:calc(20px + env(safe-area-inset-top)) 18px calc(20px + env(safe-area-inset-bottom));overflow:auto}
+.panelHeader{display:flex;justify-content:space-between;align-items:center;margin-bottom:17px}.panelHeader h2{margin:0;font-size:28px;letter-spacing:-1px}.back{border:1px solid var(--line);background:#fff;border-radius:11px;padding:8px 11px;font-size:11px;font-weight:800}
+.panelDesc{font-size:11px;color:#999;margin:-8px 0 13px}
+.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:9px}.cardTitle{font-size:13px;font-weight:900}.cardSub{font-size:10px;color:#999;margin-top:4px}
+.metricGrid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.metric{background:#fff;border:1px solid var(--line);border-radius:15px;padding:14px}.metric b{font-size:24px}.metric span{display:block;color:#999;font-size:9px;margin-top:2px}
+.rankRow{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--line);font-size:12px}.rankRow:last-child{border:0}.rankRow b{font-size:14px}
+.taskRow{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--line);font-size:12px}.taskRow:last-child{border:0}.taskRow small{display:block;color:#999;margin-top:3px}.done{color:var(--green);font-size:17px}
+.skinGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.skin{background:#fff;border:1px solid var(--line);border-radius:13px;padding:11px;text-align:center;font-size:10px}.skinDot{width:38px;height:38px;border-radius:50%;margin:0 auto 8px;border:3px solid #171717}.skin.locked{opacity:.4}.skin.active{border:1.5px solid #171717}
+
+/* reward */
+.rewardOverlay{position:absolute;inset:0;background:#00000010;display:flex;align-items:center;justify-content:center;padding:20px;z-index:20}.rewardBox{width:100%;max-width:350px;background:#fff;border:1px solid var(--line);border-radius:20px;padding:22px;text-align:center}.rewardBox h3{margin:0;font-size:18px}.rewardCoins{font-size:30px;font-weight:950;color:var(--gold);margin:8px}
+</style>
+</head>
+<body>
+<div id="app">
+<canvas id="gameCanvas"></canvas>
+
+<!-- HOME -->
+<section id="home" class="home">
+  <div class="homeTop">
+    <div><div class="statLabel">BEST SCORE</div><div class="bestValue" id="homeBest">0</div></div>
+    <div class="coin"><span class="coinDot"></span><span id="homeCoins">0</span></div>
+  </div>
+  <div class="hero">
+    <div class="eyebrow">A LITTLE SHORT</div>
+    <h1>差一点</h1>
+    <p>等待 · 判断 · 点击<br>越接近中心，得分越高</p>
+    <button class="primary" id="playBtn">开始挑战</button>
+  </div>
+  <div class="homeGrid">
+    <button class="homeCard gold" id="dailyBtn"><b>每日挑战</b><span>今日最高 · <strong id="homeDaily">0</strong></span></button>
+    <button class="homeCard" id="taskBtn"><b>任务</b><span>今日进度 · <strong id="homeTask">0/4</strong></span></button>
+    <button class="homeCard" id="rankBtn"><b>排行榜</b><span>本地最高 · <strong id="homeRank">—</strong></span></button>
+    <button class="homeCard" id="skinBtn"><b>皮肤</b><span>已解锁 · <strong id="homeSkins">1</strong></span></button>
+  </div>
+  <div class="homeBottom">
+    <button class="smallCard" id="rewardBtn"><b>🎁 今日奖励</b><span>领取 20 金币</span></button>
+    <button class="smallCard" id="soundBtn"><b id="soundText">🔊 声音：开</b><span>游戏音效</span></button>
+  </div>
+  <div class="homeFoot">离线可玩 · 本地存档 · V10</div>
+</section>
+
+<!-- GAME HUD -->
+<section id="hud" class="hud hidden">
+  <div class="hudTop">
+    <div class="hudCell"><div class="hudLabel">BEST</div><div class="hudValue" id="hudBest">0</div></div>
+    <div class="hudCell" style="text-align:center"><div class="hudLabel">SCORE</div><div class="hudValue hudScore" id="hudScore">0</div></div>
+    <div class="hudCell right"><div class="hudLabel">COMBO</div><div class="hudValue" id="hudCombo">×0</div></div>
+  </div>
+  <div class="track"><i id="roundTrack"></i></div>
+  <div class="frenzyTrack" id="frenzyTrack"><i id="frenzyFill"></i></div>
+  <button class="pauseBtn" id="pauseBtn">Ⅱ</button>
+</section>
+<div id="toast" class="toast"></div><div id="bossTitle" class="flashTitle redTitle">BOSS ROUND</div><div id="frenzyTitle" class="flashTitle goldTitle">FRENZY MODE</div>
+
+<!-- RESULT -->
+<section id="result" class="centerOverlay hidden">
+  <div class="overlayCard">
+    <div class="small">本局得分</div><div class="bigScore" id="resultScore">0</div><div id="recordText" style="color:var(--gold);font-size:11px;font-weight:850;height:17px"></div>
+    <div class="resultNear" id="nearText">距离最高纪录<b>0 分</b></div>
+    <div class="resultStats"><div class="resultStat"><b id="resultCombo">0</b><span>最高连击</span></div><div class="resultStat"><b id="resultRound">0</b><span>完成回合</span></div></div>
+    <button class="btn btnGold" id="reviveBtn" style="width:100%">继续一次 · 激励复活</button>
+    <button class="btn btnDark" id="againBtn" style="width:100%">重新开始</button>
+    <button class="btn btnLight" id="resultHomeBtn" style="width:100%">返回首页</button>
+  </div>
+</section>
+
+<!-- PAUSE -->
+<section id="pause" class="centerOverlay hidden">
+  <div class="overlayCard"><div class="small">GAME PAUSED</div><h2>稳住</h2><p class="subText">下一次，晚一点。</p><button class="btn btnDark" id="resumeBtn">继续游戏</button><button class="btn btnLight" id="pauseHomeBtn">退出本局</button></div>
+</section>
+
+<!-- PANELS -->
+<section id="dailyPanel" class="panel hidden"><div class="panelHeader"><h2>每日挑战</h2><button class="back" data-back>← 首页</button></div><p class="panelDesc">每天一次，固定节奏。完成后记录今日最高分。</p><div class="card"><div class="cardTitle">今日极限</div><div class="cardSub">目标：冲击 300 分以上</div><button class="btn btnDark" id="dailyPlay" style="width:100%">开始今日挑战</button></div><div class="metricGrid"><div class="metric"><b id="dailyScore">0</b><span>今日最高</span></div><div class="metric"><b id="dailyCoins">0</b><span>金币</span></div></div></section>
+
+<section id="taskPanel" class="panel hidden"><div class="panelHeader"><h2>任务</h2><button class="back" data-back>← 首页</button></div><p class="panelDesc">短任务、短反馈，每次打开都有一个目标。</p><div class="card" id="taskList"></div></section>
+
+<section id="rankPanel" class="panel hidden"><div class="panelHeader"><h2>排行榜</h2><button class="back" data-back>← 首页</button></div><p class="panelDesc">当前为单机本地榜，联网后可替换为云端排行榜。</p><div class="card" id="rankList"></div></section>
+
+<section id="skinPanel" class="panel hidden"><div class="panelHeader"><h2>皮肤</h2><button class="back" data-back>← 首页</button></div><p class="panelDesc">高分解锁主题，当前仅影响视觉主题。</p><div class="skinGrid" id="skinGrid"></div></section>
+
+<!-- REWARD -->
+<section id="rewardOverlay" class="rewardOverlay hidden"><div class="rewardBox"><h3>今日奖励</h3><p class="subText">每天领取一次，保持回来。</p><div class="rewardCoins">+20 金币</div><button class="btn btnDark" id="claimReward" style="width:100%">领取</button><button class="btn btnLight" id="closeReward" style="width:100%">关闭</button></div></section>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+const app=document.getElementById('app');
+const canvas=document.getElementById('gameCanvas');
+const ctx=canvas.getContext('2d');
+const $=id=>document.getElementById(id);
+
+let W=0,H=0,dpr=1;
+let gameState='home'; // home | playing | paused | result
+let score=0,combo=0,maxCombo=0,round=0,best=Number(localStorage.getItem('v10_best')||0);
+let bestCombo=Number(localStorage.getItem('v10_bestCombo')||0);
+let coins=Number(localStorage.getItem('v10_coins')||0);
+let target=null,particles=[],lastTime=0,shake=0;
+let frenzyLeft=0,revived=false,dailyMode=false;
+let soundOn=true,audioCtx=null;
+let skin=localStorage.getItem('v10_skin')||'classic';
+
+function resize(){
+  dpr=Math.min(window.devicePixelRatio||1,2);W=app.clientWidth;H=app.clientHeight;
+  canvas.width=W*dpr;canvas.height=H*dpr;canvas.style.width=W+'px';canvas.style.height=H+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+window.addEventListener('resize',resize);resize();
+
+function dateKey(){return new Date().toISOString().slice(0,10)}
+function dailyKey(){return 'v10_daily_'+dateKey()}
+function save(){localStorage.setItem('v10_best',best);localStorage.setItem('v10_bestCombo',bestCombo);localStorage.setItem('v10_coins',coins)}
+function beep(freq=600,dur=.05,type='sine,gain=.02'){
+  if(!soundOn)return;
+  try{
+    audioCtx ||= new (window.AudioContext||window.webkitAudioContext)();
+    audioCtx.resume();
+    const [t,g]=type.split(',');const o=audioCtx.createOscillator(),a=audioCtx.createGain();
+    o.type=t;o.frequency.value=freq;a.gain.value=g?Number(g):.02;o.connect(a);a.connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+dur);
+  }catch(e){}
+}
+function toast(text,color='#171717'){
+  const el=$('toast');el.textContent=text;el.style.color=color;el.classList.remove('show');void el.offsetWidth;el.classList.add('show');
+}
+function circle(x,y,r,color,width=3,alpha=1){
+  ctx.save();ctx.globalAlpha=alpha;ctx.strokeStyle=color;ctx.lineWidth=width;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.stroke();ctx.restore();
+}
+function burst(x,y,boss=false){
+  for(let i=0;i<(boss?48:22);i++){
+    const a=Math.random()*Math.PI*2,s=1.5+Math.random()*(boss?6:4);
+    particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,r:1+Math.random()*3,life:1,boss});
+  }
+}
+
+function showHome(){
+  gameState='home';target=null;
+  hideAllPanels();$('home').classList.remove('hidden');$('hud').classList.add('hidden');$('result').classList.add('hidden');$('pause').classList.add('hidden');
+  refreshHome();drawBackground();
+}
+function hideAllPanels(){['dailyPanel','taskPanel','rankPanel','skinPanel','rewardOverlay'].forEach(id=>$(id).classList.add('hidden'))}
+function showPanel(id){
+  gameState='home';target=null;$('home').classList.add('hidden');$('hud').classList.add('hidden');$('result').classList.add('hidden');$('pause').classList.add('hidden');hideAllPanels();$(id).classList.remove('hidden');refreshPanels();
+}
+
+function refreshHome(){
+  const daily=Number(localStorage.getItem(dailyKey())||0);
+  $('homeBest').textContent=best;$('homeCoins').textContent=coins;$('homeDaily').textContent=daily;
+  const progress=[best>=500,bestCombo>=10,best>=800,daily>=300].filter(Boolean).length;
+  $('homeTask').textContent=progress+'/4';
+  $('homeRank').textContent=best?('#'+Math.max(1,1000-Math.floor(best/10))):'—';
+  $('homeSkins').textContent=getUnlockedSkins().length;
+}
+function getUnlockedSkins(){
+  const rules=[0,300,800,1500,2500,4000];
+  return rules.map((r,i)=>({i,r,ok:best>=r})).filter(x=>x.ok);
+}
+function refreshPanels(){
+  const daily=Number(localStorage.getItem(dailyKey())||0);$('dailyScore').textContent=daily;$('dailyCoins').textContent=coins;
+  const tasks=[['单局达到 500 分',best>=500,20],['单局达到 ×10 连击',bestCombo>=10,30],['单局达到 800 分',best>=800,25],['今日挑战达到 300 分',daily>=300,35]];
+  $('taskList').innerHTML=tasks.map(t=>`<div class="taskRow"><div>${t[0]}<small>奖励 ${t[2]} 金币</small></div><div class="${t[1]?'done':''}">${t[1]?'✓':'○'}</div></div>`).join('');
+  const ranks=[['你',best],['极速玩家',Math.max(0,best-31)],['差不多',Math.max(0,best-76)],['晚一点',Math.max(0,best-131)],['再来一次',Math.max(0,best-208)]];
+  $('rankList').innerHTML=ranks.map((r,i)=>`<div class="rankRow"><span>${i+1}. ${r[0]}</span><b>${r[1]}</b></div>`).join('');
+  const skins=[['classic','经典','#171717',0],['blue','蓝墨','#315f9b',300],['gold','鎏金','#b78920',800],['red','赤焰','#c85a61',1500],['green','森林','#638d72',2500],['violet','紫电','#745a98',4000]];
+  $('skinList')?.remove();
+  $('skinPanel').querySelector('.skinGrid').innerHTML=skins.map(s=>`<button class="skin ${skin===s[0]?'active':''} ${best>=s[3]?'':'locked'}" data-skin="${s[0]}"><div class="skinDot" style="background:${s[2]}"></div>${s[1]}${s[3]?' · '+s[3]+'分':''}</button>`).join('');
+  $('skinPanel').querySelectorAll('.skin').forEach(el=>el.onclick=()=>{const s=skins.find(x=>x[0]===el.dataset.skin);if(best<s[3])return;skin=s[0];localStorage.setItem('v10_skin',skin);refreshPanels();toast('已切换：'+s[1])});
+}
+
+function resetGame(){
+  score=0;combo=0;maxCombo=0;round=0;target=null;particles=[];frenzyLeft=0;revived=false;
+  $('hudScore').textContent='0';$('hudCombo').textContent='×0';$('hudBest').textContent=best;$('roundTrack').style.width='0';$('frenzyTrack').style.opacity=0;
+}
+function startGame(isDaily=false){
+  audioCtx?.resume?.();dailyMode=isDaily;resetGame();gameState='playing';
+  $('home').classList.add('hidden');hideAllPanels();$('result').classList.add('hidden');$('pause').classList.add('hidden');$('hud').classList.remove('hidden');
+  spawnTarget();
+}
+function spawnTarget(){
+  if(gameState!=='playing')return;
+  round++;
+  const boss=round%10===0;
+  const margin=62;
+  const x=margin+Math.random()*(W-margin*2);
+  const y=135+Math.random()*(H-265);
+  const speedFactor=(dailyMode?.83:1)*(frenzyLeft>0?1.24:1);
+  target={x,y,boss,max:(boss?84:Math.max(29,58-combo*.36))*speedFactor,min:boss?10:6,born:performance.now(),life:(boss?1350:Math.max(470,920-combo*9))/speedFactor,phase:Math.random()*7,r:0};
+  if(boss){flashTitle($('bossTitle'));beep(170,.13,'sine,.03')}
+}
+function flashTitle(el){el.classList.remove('show');void el.offsetWidth;el.classList.add('show')}
+function startFrenzy(){
+  frenzyLeft=9000;$('frenzyTrack').style.opacity=1;flashTitle($('frenzyTitle'));toast('狂热模式 ×2', '#b78920');beep(980,.1,'triangle,.035');
+}
+function hit(px,py){
+  if(gameState!=='playing'||!target)return;
+  const d=Math.hypot(px-target.x,py-target.y);
+  if(d>target.r*1.48){endGame();return}
+  const accuracy=1-d/Math.max(target.r,1);
+  const perfect=accuracy>.88,great=accuracy>.58;
+  let gain=Math.round((target.boss?80:perfect?30:great?18:10)*(1+Math.min(combo,30)*.11));
+  if(target.boss)gain+=Math.floor(combo*2);if(frenzyLeft>0)gain*=2;
+  score+=gain;combo++;maxCombo=Math.max(maxCombo,combo);
+  $('hudScore').textContent=score;$('hudCombo').textContent='×'+combo;
+  burst(target.x,target.y,target.boss);
+  toast(target.boss?'BOSS 击破 +'+gain:perfect?'完美 +'+gain:'命中 +'+gain,target.boss||perfect?'#b78920':'#171717');
+  beep(target.boss?920:perfect?780:560,.055,'sine,.025');if(perfect)beep(1180,.07,'triangle,.015');
+  if([10,20,30,40].includes(combo))startFrenzy();
+  target=null;setTimeout(()=>{if(gameState==='playing')spawnTarget()},Math.max(55,205-combo*4));
+}
+function endGame(){
+  if(gameState!=='playing')return;
+  gameState='result';target=null;$('hud').classList.add('hidden');
+  const old=best;if(score>best)best=score;if(maxCombo>bestCombo)bestCombo=maxCombo;save();
+  if(dailyMode){const oldDaily=Number(localStorage.getItem(dailyKey())||0);if(score>oldDaily)localStorage.setItem(dailyKey(),String(score))}
+  $('resultScore').textContent=score;$('resultCombo').textContent=maxCombo;$('resultRound').textContent=Math.max(0,round-1);
+  $('recordText').textContent=score>old?'新纪录':'';
+  $('nearText').innerHTML=score>old?`新的最高纪录<b>领先 ${score-old} 分</b>`:`距离最高纪录<b>${Math.max(0,old-score)} 分</b>`;
+  $('reviveBtn').style.display=revived?'none':'block';$('result').classList.remove('hidden');refreshHome();
+  beep(100,.15,'sine,.025');
+}
+function revive(){
+  if(revived||gameState!=='result')return;revived=true;$('result').classList.add('hidden');
+  let n=3;toast('复活中 '+n,'#b78920');
+  const timer=setInterval(()=>{n--;if(n<=0){clearInterval(timer);gameState='playing';combo=Math.floor(combo*.65);$('hud').classList.remove('hidden');toast('继续！','#638d72');spawnTarget()}else toast('复活中 '+n,'#b78920')},600);
+}
+function pauseGame(){if(gameState!=='playing')return;gameState='paused';$('hud').classList.add('hidden');$('pause').classList.remove('hidden')}
+function resumeGame(){if(gameState!=='paused')return;gameState='playing';$('pause').classList.remove('hidden');$('hud').classList.remove('hidden');if(!target)spawnTarget()}
+function drawBackground(){
+  ctx.clearRect(0,0,W,H);ctx.fillStyle=getBg();ctx.fillRect(0,0,W,H);
+}
+function getBg(){return skin==='gold'?'#faf8f0':skin==='blue'?'#f3f6fa':skin==='red'?'#faf3f4':skin==='green'?'#f3f7f4':skin==='violet'?'#f6f3fa':'#f5f5f2'}
+function render(now){
+  const dt=Math.min(40,lastTime?now-lastTime:16);lastTime=now;
+  ctx.clearRect(0,0,W,H);ctx.fillStyle=getBg();ctx.fillRect(0,0,W,H);
+  if(gameState==='playing'&&target){
+    const age=now-target.born,p=Math.min(1,age/target.life);target.r=target.max-(target.max-target.min)*p;
+    const main=skin==='red'?'#c85a61':skin==='green'?'#638d72':skin==='violet'?'#745a98':skin==='blue'?'#315f9b':skin==='gold'?'#b78920':'#171717';
+    if(target.boss){circle(target.x,target.y,target.r+14+Math.sin(now/90+target.phase)*2.5,'#c85a61',3,.17);circle(target.x,target.y,target.r,main,4);circle(target.x,target.y,target.r*.5,'#b78920',2)}
+    else{circle(target.x,target.y,target.max*1.55,main,1,.06);circle(target.x,target.y,target.r,main,3)}
+    ctx.fillStyle=main;ctx.beginPath();ctx.arc(target.x,target.y,3.5,0,Math.PI*2);ctx.fill();
+    if(age>target.life)endGame();
+  }
+  particles=particles.filter(p=>p.life>0);
+  for(const p of particles){p.x+=p.vx*dt/16;p.y+=p.vy*dt/16;p.vy+=.08;p.life-=dt/500;ctx.globalAlpha=Math.max(0,p.life);ctx.fillStyle=p.boss?'#b78920':'#171717';ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill()}
+  ctx.globalAlpha=1;
+  if(gameState==='playing'){
+    if(frenzyLeft>0){frenzyLeft-=dt;$('frenzyFill').style.width=Math.max(0,frenzyLeft/9000*100)+'%';if(frenzyLeft<=0)$('frenzyTrack').style.opacity=0}
+    $('roundTrack').style.width=((round%10)/10*100)+'%';
+  }
+  if(shake>0){app.style.transform=`translateX(${(Math.random()-.5)*shake}px)`;shake*=.84;if(shake<.2){shake=0;app.style.transform=''}}
+  requestAnimationFrame(render);
+}
+canvas.addEventListener('pointerdown',e=>{
+  if(gameState!=='playing')return;e.preventDefault();const r=canvas.getBoundingClientRect();hit(e.clientX-r.left,e.clientY-r.top)
+});
+
+/* Home events */
+$('playBtn').onclick=()=>startGame(false);
+$('dailyBtn').onclick=()=>showPanel('dailyPanel');
+$('taskBtn').onclick=()=>showPanel('taskPanel');
+$('rankBtn').onclick=()=>showPanel('rankPanel');
+$('skinBtn').onclick=()=>showPanel('skinPanel');
+$('dailyPlay').onclick=()=>startGame(true);
+$('reviveBtn').onclick=revive;
+$('againBtn').onclick=()=>startGame(dailyMode);
+$('resultHomeBtn').onclick=showHome;
+$('pauseBtn').onclick=pauseGame;
+$('resumeBtn').onclick=resumeGame;
+$('pauseHomeBtn').onclick=showHome;
+document.querySelectorAll('[data-back]').forEach(b=>b.onclick=showHome);
+$('soundBtn').onclick=()=>{soundOn=!soundOn;$('soundText').textContent='🔊 声音：'+(soundOn?'开':'关');if(soundOn)beep(650,.05)};
+
+/* Daily reward */
+$('rewardBtn').onclick=()=>{
+  const k='v10_reward_'+dateKey();
+  if(localStorage.getItem(k)){toast('今天已经领取过了','#999');return}
+  $('rewardOverlay').classList.remove('hidden');
+};
+$('claimReward').onclick=()=>{coins+=20;localStorage.setItem('v10_reward_'+dateKey(),'1');save();$('rewardOverlay').classList.add('hidden');refreshHome();toast('今日奖励 +20','#b78920');beep(880,.08,'triangle,.025')};
+$('closeReward').onclick=()=>$('rewardOverlay').classList.add('hidden');
+
+refreshHome();drawBackground();requestAnimationFrame(render);
+})();
+</script>
+</body>
+</html>
