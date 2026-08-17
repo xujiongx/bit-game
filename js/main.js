@@ -14,6 +14,14 @@ import {
 import { getItem, setItem, getNumber, getJSON, setJSON } from './storage';
 import { beep, resumeAudio, unlockAudio } from './audio';
 import { drawIcon, drawIconCenter } from './icons';
+import {
+  buildContext,
+  recordRun,
+  listDailyTasks,
+  listAchieveTasks,
+  dailyProgress,
+  claimTask,
+} from './tasks';
 
 const COLORS = {
   paper: '#ffffff',
@@ -39,6 +47,8 @@ const SKINS = [
 const SCALE = Math.min(1.12, Math.max(0.88, W / 375));
 const PAD = Math.round(18 * SCALE);
 const TIMED_MS = 60000; // 限时模式 1 分钟
+const REVIVE_COST = 5;
+const REVIVE_MAX = 3;
 const RANK_LIMIT = 20;
 const RANK_KEYS = {
   classic: 'v10_rank_classic',
@@ -145,11 +155,18 @@ export default class Main {
     this.target = null;
     this.particles = [];
     this.frenzyLeft = 0;
-    this.revived = false;
+    this.revivesUsed = 0;
     this.mode = 'classic'; // classic | timed | daily
     this.timedLeft = 0;
     this.timedBest = getNumber('v10_timed_best', 0);
     this.rankTab = 'classic'; // classic | timed
+    this.taskTab = 'daily'; // daily | achieve
+    this.taskScroll = 0;
+    this.taskScrollMax = 0;
+    this.taskListTop = 0;
+    this.dragStartY = 0;
+    this.dragScrollFrom = 0;
+    this.didScroll = false;
     this.runStartedAt = 0;
     this.pendingRank = false;
     this.oldBest = 0;
@@ -160,7 +177,7 @@ export default class Main {
     this.lastWall = Date.now();
     this.spawnAt = 0;
     this.spawnPauseRemain = 0;
-    this.reviveCount = 0;
+    this.reviveCountdown = 0;
     this.reviveAt = 0;
     this.touchLockUntil = 0;
     this.toastText = '';
@@ -169,7 +186,7 @@ export default class Main {
     this.bannerText = '';
     this.bannerColor = COLORS.red;
     this.bannerUntil = 0;
-    this.pressedId = ''; // 首页按钮按下态
+    this.pressedId = ''; // 按钮按下态（全局）
     this.pressStartId = '';
 
     this.playTop = SAFE_TOP + Math.round(110 * SCALE);
@@ -205,9 +222,17 @@ export default class Main {
   }
 
   taskProgress() {
-    const daily = getNumber(dailyKey(), 0);
-    return [this.best >= 500, this.bestCombo >= 10, this.best >= 800, daily >= 300].filter(Boolean)
-      .length;
+    const ctx = this.taskContext();
+    return dailyProgress(ctx);
+  }
+
+  taskContext() {
+    return buildContext({
+      best: this.best,
+      bestCombo: this.bestCombo,
+      timedBest: this.timedBest,
+      skinsUnlocked: this.unlockedSkins().length,
+    });
   }
 
   bindLifecycle() {
@@ -246,11 +271,6 @@ export default class Main {
     });
   }
 
-  /** 首页（含奖励弹层）走「按下反馈 + 抬起确认」 */
-  isHomeUi() {
-    return this.gameState === 'home' || (this.gameState === 'panel' && this.panel === 'reward');
-  }
-
   findButton(x, y) {
     for (let i = 0; i < this.buttons.length; i++) {
       const b = this.buttons[i];
@@ -275,18 +295,27 @@ export default class Main {
   onTouchStart(x, y) {
     if (this.gameTime < this.touchLockUntil) return;
     unlockAudio();
+    if (this.reviveCountdown > 0) return;
 
-    if (this.reviveCount > 0) return;
+    this.didScroll = false;
+    if (this.gameState === 'panel' && this.panel === 'task' && y >= this.taskListTop) {
+      this.dragStartY = y;
+      this.dragScrollFrom = this.taskScroll;
+    } else {
+      this.dragStartY = 0;
+    }
 
+    // 对局中：暂停键走反馈；点空白才判定命中
     if (this.gameState === 'playing') {
-      this.touchLockUntil = this.gameTime + 80;
-      for (let i = 0; i < this.buttons.length; i++) {
-        const b = this.buttons[i];
-        if (b.id === 'pause' && hitRect(x, y, b)) {
-          this.pauseGame();
-          return;
-        }
+      const btn = this.findButton(x, y);
+      if (btn && btn.id === 'pause') {
+        this.pressedId = 'pause';
+        this.pressStartId = 'pause';
+        this.tapFeedback();
+        return;
       }
+      this.clearPress();
+      this.touchLockUntil = this.gameTime + 80;
       this.hit(x, y);
       return;
     }
@@ -296,35 +325,56 @@ export default class Main {
       this.clearPress();
       return;
     }
-
-    // 首页：按下即反馈并跳转（滑出仅取消按下态动画，不重复触发）
-    if (this.isHomeUi()) {
-      this.pressedId = btn.id;
-      this.pressStartId = btn.id;
-      this.tapFeedback();
-      this.touchLockUntil = this.gameTime + 160;
-      this.handleButton(btn.id);
-      return;
-    }
-
-    // 其他页面按下即响应
-    this.touchLockUntil = this.gameTime + 80;
-    this.handleButton(btn.id);
+    this.pressedId = btn.id;
+    this.pressStartId = btn.id;
+    this.tapFeedback();
   }
 
   onTouchMove(x, y) {
-    if (!this.isHomeUi() || !this.pressStartId) return;
+    if (
+      this.gameState === 'panel' &&
+      this.panel === 'task' &&
+      this.dragStartY &&
+      this.taskScrollMax > 0
+    ) {
+      const dy = this.dragStartY - y;
+      if (Math.abs(dy) > 8) {
+        this.didScroll = true;
+        this.clearPress();
+        this.taskScroll = Math.max(
+          0,
+          Math.min(this.taskScrollMax, this.dragScrollFrom + dy)
+        );
+      }
+    }
+    if (!this.pressStartId) return;
     const btn = this.findButton(x, y);
-    // 仅更新按下视觉；跳转已在 touchstart 完成
     this.pressedId = btn && btn.id === this.pressStartId ? this.pressStartId : '';
   }
 
-  onTouchEnd() {
-    // 松开后稍留一帧按下态再清除，反馈更明显
-    if (this.pressedId || this.pressStartId) {
-      const clear = () => this.clearPress();
-      setTimeout(clear, 80);
+  onTouchEnd(x, y) {
+    const startId = this.pressStartId;
+    const scrolled = this.didScroll;
+    this.dragStartY = 0;
+    this.didScroll = false;
+
+    if (!startId) return;
+
+    const btn = this.findButton(x, y);
+    const confirm = !scrolled && this.pressedId === startId && btn && btn.id === startId;
+
+    const clear = () => this.clearPress();
+    setTimeout(clear, 90);
+
+    if (!confirm) return;
+    if (this.gameTime < this.touchLockUntil) return;
+    this.touchLockUntil = this.gameTime + 140;
+
+    if (startId === 'pause') {
+      this.pauseGame();
+      return;
     }
+    this.handleButton(startId);
   }
 
   handleButton(id) {
@@ -339,7 +389,17 @@ export default class Main {
         this.showPanel('daily');
         break;
       case 'open_task':
+        this.taskTab = 'daily';
+        this.taskScroll = 0;
         this.showPanel('task');
+        break;
+      case 'task_tab_daily':
+        this.taskTab = 'daily';
+        this.taskScroll = 0;
+        break;
+      case 'task_tab_achieve':
+        this.taskTab = 'achieve';
+        this.taskScroll = 0;
         break;
       case 'open_rank':
         this.rankTab = 'classic';
@@ -389,6 +449,14 @@ export default class Main {
         this.resumeGame();
         break;
       default:
+        if (id && id.indexOf('claim_daily_') === 0) {
+          this.claimTaskReward('daily', id.slice('claim_daily_'.length));
+          break;
+        }
+        if (id && id.indexOf('claim_ach_') === 0) {
+          this.claimTaskReward('achieve', id.slice('claim_ach_'.length));
+          break;
+        }
         if (id && id.indexOf('skin_') === 0) {
           const sid = id.slice(5);
           const s = SKINS.find((x) => x.id === sid);
@@ -399,6 +467,18 @@ export default class Main {
         }
         break;
     }
+  }
+
+  claimTaskReward(type, taskId) {
+    const res = claimTask(type, taskId, this.taskContext());
+    if (!res.ok) {
+      this.toast(res.message || '无法领取', '#999999');
+      return;
+    }
+    this.coins += res.reward;
+    this.save();
+    this.toast(`领取 +${res.reward} 金币`, COLORS.gold);
+    beep(this.soundOn, 880, 0.08, 'triangle', 0.025);
   }
 
   toast(text, color = COLORS.ink) {
@@ -418,7 +498,7 @@ export default class Main {
     this.panel = '';
     this.target = null;
     this.spawnAt = 0;
-    this.reviveCount = 0;
+    this.reviveCountdown = 0;
   }
 
   showPanel(name) {
@@ -462,10 +542,10 @@ export default class Main {
     this.target = null;
     this.particles = [];
     this.frenzyLeft = 0;
-    this.revived = false;
+    this.revivesUsed = 0;
     this.spawnAt = 0;
     this.spawnPauseRemain = 0;
-    this.reviveCount = 0;
+    this.reviveCountdown = 0;
     this.timedLeft = this.mode === 'timed' ? TIMED_MS : 0;
   }
 
@@ -593,8 +673,8 @@ export default class Main {
         const oldDaily = getNumber(dailyKey(), 0);
         if (this.score > oldDaily) setItem(dailyKey(), this.score);
       }
-      // 经典：若还可复活则先挂起，避免中途成绩入库
-      if (this.revived) this.commitRankRecord();
+      // 经典：仍可复活则挂起成绩，用尽次数后再入库
+      if (this.revivesUsed >= REVIVE_MAX) this.commitRankRecord();
       else this.pendingRank = true;
     }
     this.shake = 7;
@@ -614,6 +694,16 @@ export default class Main {
       mode: this.mode,
     });
     this.pendingRank = false;
+    // 任务进度（以最终结算为准）
+    recordRun({
+      mode: this.mode,
+      score: this.score,
+      maxCombo: this.maxCombo,
+      best: this.best,
+      bestCombo: this.bestCombo,
+      timedBest: this.timedBest,
+      skinsUnlocked: this.unlockedSkins().length,
+    });
   }
 
   commitPendingRank() {
@@ -621,22 +711,32 @@ export default class Main {
   }
 
   revive() {
-    if (this.mode === 'timed') return; // 限时模式不可复活
-    if (this.revived || this.gameState !== 'result') return;
-    this.pendingRank = false; // 继续本局，不记第一次结算
-    this.revived = true;
+    if (this.mode === 'timed') return;
+    if (this.gameState !== 'result') return;
+    if (this.revivesUsed >= REVIVE_MAX) {
+      this.toast('本局复活次数已用完', '#999999');
+      return;
+    }
+    if (this.coins < REVIVE_COST) {
+      this.toast(`金币不足，需要 ${REVIVE_COST} 金币`, COLORS.red);
+      return;
+    }
+    this.coins -= REVIVE_COST;
+    this.save();
+    this.revivesUsed += 1;
+    this.pendingRank = false;
     this.gameState = 'playing';
     this.target = null;
-    this.reviveCount = 3;
+    this.reviveCountdown = 3;
     this.reviveAt = this.gameTime + 600;
-    this.toast('复活中 3', COLORS.gold);
+    this.toast(`复活中 3 · 剩余 ${REVIVE_MAX - this.revivesUsed} 次`, COLORS.gold);
   }
 
   tickRevive() {
-    if (this.reviveCount <= 0) return;
+    if (this.reviveCountdown <= 0) return;
     if (this.gameTime < this.reviveAt) return;
-    this.reviveCount -= 1;
-    if (this.reviveCount <= 0) {
+    this.reviveCountdown -= 1;
+    if (this.reviveCountdown <= 0) {
       this.gameState = 'playing';
       this.combo = Math.floor(this.combo * 0.65);
       this.target = null;
@@ -645,7 +745,7 @@ export default class Main {
       return;
     }
     this.reviveAt = this.gameTime + 600;
-    this.toast(`复活中 ${this.reviveCount}`, COLORS.gold);
+    this.toast(`复活中 ${this.reviveCountdown}`, COLORS.gold);
   }
 
   pauseGame() {
@@ -886,7 +986,12 @@ export default class Main {
         id: 'open_task',
         icon: 'task',
         title: '任务',
-        sub: `今日进度 · ${this.taskProgress()}/4`,
+        sub: (() => {
+          const p = this.taskProgress();
+          return p.claimable > 0
+            ? `可领取 ${p.claimable} · 每日 ${p.done}/${p.total}`
+            : `每日进度 · ${p.done}/${p.total}`;
+        })(),
         gold: false,
         x: PAD + cardW + gap,
         y: cy,
@@ -998,9 +1103,11 @@ export default class Main {
     const size = Math.round(36 * SCALE);
     const bx = W - PAD - size;
     const by = top + Math.round(64 * SCALE);
-    fillRound(bx, by, size, size, 11, COLORS.paper);
+    const pausePressed = this.beginPressTransform(bx, by, size, size, 'pause');
+    fillRound(bx, by, size, size, 11, pausePressed ? '#f0f0ec' : COLORS.paper);
     strokeRound(bx, by, size, size, 11, COLORS.line);
     drawIconCenter(ctx, 'pause', bx + size / 2, by + size / 2, Math.round(18 * SCALE), COLORS.ink);
+    this.endPressTransform(pausePressed);
     this.addBtn('pause', bx - 4, by - 4, size + 8, size + 8);
   }
 
@@ -1105,9 +1212,15 @@ export default class Main {
       cy += statH + Math.round(12 * SCALE);
 
       const btnH = Math.round(44 * SCALE);
-      if (!this.revived && this.mode !== 'timed') {
+      const canRevive = this.mode !== 'timed' && this.revivesUsed < REVIVE_MAX;
+      if (canRevive) {
         if (!measureOnly) {
-          this.drawBtn('继续一次 · 激励复活', x + pad, cy, innerW, btnH, 'revive', 'gold');
+          const left = REVIVE_MAX - this.revivesUsed;
+          const label =
+            this.coins >= REVIVE_COST
+              ? `立即复活 · ${REVIVE_COST} 金币（剩 ${left} 次）`
+              : `立即复活 · 金币不足（需 ${REVIVE_COST}）`;
+          this.drawBtn(label, x + pad, cy, innerW, btnH, 'revive', 'gold');
         }
         cy += btnH + 8;
       }
@@ -1170,7 +1283,8 @@ export default class Main {
     const backH = Math.round(32 * SCALE);
     const bx = W - PAD - backW;
     const by = top + Math.round(8 * SCALE);
-    fillRound(bx, by, backW, backH, 11, COLORS.paper);
+    const backPressed = this.beginPressTransform(bx, by, backW, backH, 'back_home');
+    fillRound(bx, by, backW, backH, 11, backPressed ? '#f0f0ec' : COLORS.paper);
     strokeRound(bx, by, backW, backH, 11, COLORS.line);
     const backIcon = Math.round(14 * SCALE);
     drawIcon(ctx, 'back', bx + 8, by + (backH - backIcon) / 2, backIcon, COLORS.ink);
@@ -1180,6 +1294,7 @@ export default class Main {
     ctx.textBaseline = 'middle';
     ctx.fillText('首页', bx + 8 + backIcon + 2, by + backH / 2);
     ctx.textBaseline = 'alphabetic';
+    this.endPressTransform(backPressed);
     this.addBtn('back_home', bx - 2, by - 2, backW + 4, backH + 4);
 
     ctx.fillStyle = '#999999';
@@ -1230,45 +1345,154 @@ export default class Main {
   }
 
   drawTaskPanel() {
-    let y = this.drawPanelChrome('任务', '短任务、短反馈，每次打开都有一个目标。');
-    const daily = getNumber(dailyKey(), 0);
-    const tasks = [
-      ['单局达到 500 分', this.best >= 500, 20],
-      ['单局达到 ×10 连击', this.bestCombo >= 10, 30],
-      ['单局达到 800 分', this.best >= 800, 25],
-      ['今日挑战达到 300 分', daily >= 300, 35],
+    let y = this.drawPanelChrome('任务', '每日任务每天刷新；成就任务永久累计，完成后可领金币。');
+
+    const tabH = Math.round(36 * SCALE);
+    const tabW = (W - PAD * 2 - 8) / 2;
+    const tabs = [
+      { id: 'task_tab_daily', key: 'daily', label: '每日任务' },
+      { id: 'task_tab_achieve', key: 'achieve', label: '成就任务' },
     ];
-    const rowH = Math.round(56 * SCALE);
-    const cardH = tasks.length * rowH + 8;
-    fillRound(PAD, y, W - PAD * 2, cardH, 16, COLORS.paper);
-    strokeRound(PAD, y, W - PAD * 2, cardH, 16, COLORS.line);
+    for (let i = 0; i < tabs.length; i++) {
+      const t = tabs[i];
+      const tx = PAD + i * (tabW + 8);
+      const active = this.taskTab === t.key;
+      const tabPressed = this.beginPressTransform(tx, y, tabW, tabH, t.id);
+      let bg = active ? COLORS.ink : COLORS.paper;
+      if (tabPressed) bg = active ? '#000000' : '#f0f0ec';
+      fillRound(tx, y, tabW, tabH, 12, bg);
+      if (!active) strokeRound(tx, y, tabW, tabH, 12, COLORS.line);
+      ctx.fillStyle = active ? '#ffffff' : '#666666';
+      ctx.font = font(800, 12);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(t.label, tx + tabW / 2, y + tabH / 2);
+      ctx.textBaseline = 'alphabetic';
+      this.endPressTransform(tabPressed);
+      this.addBtn(t.id, tx, y, tabW, tabH);
+    }
+    y += tabH + Math.round(12 * SCALE);
+
+    const ctxData = this.taskContext();
+    const tasks =
+      this.taskTab === 'daily' ? listDailyTasks(ctxData) : listAchieveTasks(ctxData);
+    const claimPrefix = this.taskTab === 'daily' ? 'claim_daily_' : 'claim_ach_';
+
+    const claimable = tasks.filter((t) => t.claimable).length;
+    const done = tasks.filter((t) => t.done).length;
+    const summaryH = Math.round(52 * SCALE);
+    fillRound(PAD, y, W - PAD * 2, summaryH, 14, this.taskTab === 'daily' ? '#fffdf7' : COLORS.paper);
+    strokeRound(
+      PAD,
+      y,
+      W - PAD * 2,
+      summaryH,
+      14,
+      this.taskTab === 'daily' ? '#eadfbf' : COLORS.line
+    );
+    ctx.fillStyle = COLORS.ink;
+    ctx.font = font(800, 13);
+    ctx.textAlign = 'left';
+    ctx.fillText(
+      this.taskTab === 'daily' ? '今日目标' : '永久成就',
+      PAD + 14,
+      y + Math.round(22 * SCALE)
+    );
+    ctx.fillStyle = '#999999';
+    ctx.font = font(400, 11);
+    ctx.fillText(`完成 ${done}/${tasks.length}`, PAD + 14, y + Math.round(40 * SCALE));
+    ctx.textAlign = 'right';
+    ctx.fillStyle = claimable ? COLORS.gold : '#999999';
+    ctx.font = font(700, 12);
+    ctx.fillText(claimable ? `${claimable} 个可领取` : '暂无奖励', W - PAD - 14, y + Math.round(32 * SCALE));
+    y += summaryH + Math.round(10 * SCALE);
+
+    const listTop = y;
+    this.taskListTop = listTop;
+    const hintH = Math.round(28 * SCALE);
+    const screenBottom = H - SAFE_BOTTOM - Math.round(10 * SCALE);
+    const listBottom = screenBottom - hintH;
+    const rowH = Math.round(68 * SCALE);
+    const gap = 8;
+    const viewH = Math.max(40, listBottom - listTop);
+    const contentH = tasks.length * (rowH + gap) - gap;
+    this.taskScrollMax = Math.max(0, contentH - viewH);
+    if (this.taskScroll > this.taskScrollMax) this.taskScroll = this.taskScrollMax;
+
+    if (!tasks.length) {
+      ctx.fillStyle = '#aaaaaa';
+      ctx.font = font(500, 13);
+      ctx.textAlign = 'center';
+      ctx.fillText('暂无任务', W / 2, y + 40);
+      return;
+    }
+
+    // 列表裁剪区：不占底部提示条
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(PAD - 2, listTop, W - PAD * 2 + 4, viewH);
+    ctx.clip();
+
     for (let i = 0; i < tasks.length; i++) {
       const t = tasks[i];
-      const ty = y + 4 + i * rowH;
+      const ry = listTop - this.taskScroll + i * (rowH + gap);
+      if (ry + rowH < listTop || ry > listBottom) continue;
+
+      fillRound(PAD, ry, W - PAD * 2, rowH, 14, COLORS.paper);
+      strokeRound(PAD, ry, W - PAD * 2, rowH, 14, COLORS.line);
+
       ctx.fillStyle = COLORS.ink;
-      ctx.font = font(500, 12);
+      ctx.font = font(800, 13);
       ctx.textAlign = 'left';
-      ctx.fillText(t[0], PAD + 14, ty + Math.round(22 * SCALE));
+      ctx.fillText(t.title, PAD + 14, ry + Math.round(22 * SCALE));
       ctx.fillStyle = '#999999';
       ctx.font = font(400, 10);
-      ctx.fillText(`奖励 ${t[2]} 金币`, PAD + 14, ty + Math.round(42 * SCALE));
-      ctx.fillStyle = t[1] ? COLORS.green : '#999999';
-      const markSize = Math.round(18 * SCALE);
-      drawIconCenter(
-        ctx,
-        t[1] ? 'check' : 'circle',
-        W - PAD - 14 - markSize / 2,
-        ty + Math.round(28 * SCALE),
-        markSize,
-        t[1] ? COLORS.green : '#999999'
-      );
-      if (i < tasks.length - 1) {
-        ctx.strokeStyle = COLORS.line;
-        ctx.beginPath();
-        ctx.moveTo(PAD + 14, ty + rowH - 2);
-        ctx.lineTo(W - PAD - 14, ty + rowH - 2);
-        ctx.stroke();
+      ctx.fillText(t.desc, PAD + 14, ry + Math.round(40 * SCALE));
+      ctx.fillStyle = COLORS.gold;
+      ctx.font = font(700, 11);
+      ctx.fillText(`+${t.reward} 金币`, PAD + 14, ry + Math.round(56 * SCALE));
+
+      const btnW = Math.round(72 * SCALE);
+      const btnH = Math.round(32 * SCALE);
+      const bx = W - PAD - 14 - btnW;
+      const by = ry + (rowH - btnH) / 2;
+
+      if (t.claimed) {
+        ctx.fillStyle = COLORS.green;
+        ctx.font = font(700, 12);
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('已领取', W - PAD - 14, ry + rowH / 2);
+        ctx.textBaseline = 'alphabetic';
+      } else if (t.claimable) {
+        this.drawBtn('领取', bx, by, btnW, btnH, claimPrefix + t.id, 'gold');
+      } else {
+        drawIconCenter(ctx, 'circle', W - PAD - 24, ry + rowH / 2, Math.round(18 * SCALE), '#cccccc');
       }
+    }
+    ctx.restore();
+
+    // 底部提示条：独立区域，不叠卡片
+    if (this.taskScrollMax > 0) {
+      const tipY = listBottom;
+      ctx.fillStyle = this.getBg();
+      ctx.fillRect(0, tipY, W, screenBottom - tipY + SAFE_BOTTOM + 4);
+
+      // 顶部分隔线
+      ctx.strokeStyle = COLORS.line;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(PAD, tipY + 0.5);
+      ctx.lineTo(W - PAD, tipY + 0.5);
+      ctx.stroke();
+
+      const atEnd = this.taskScroll >= this.taskScrollMax - 1;
+      ctx.fillStyle = '#aaaaaa';
+      ctx.font = font(500, 11);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(atEnd ? '已经到底了' : '上滑查看更多', W / 2, tipY + hintH / 2);
+      ctx.textBaseline = 'alphabetic';
     }
   }
 
@@ -1286,7 +1510,10 @@ export default class Main {
       const t = tabs[i];
       const tx = PAD + i * (tabW + 8);
       const active = this.rankTab === t.key;
-      fillRound(tx, y, tabW, tabH, 12, active ? COLORS.ink : COLORS.paper);
+      const tabPressed = this.beginPressTransform(tx, y, tabW, tabH, t.id);
+      let bg = active ? COLORS.ink : COLORS.paper;
+      if (tabPressed) bg = active ? '#000000' : '#f0f0ec';
+      fillRound(tx, y, tabW, tabH, 12, bg);
       if (!active) strokeRound(tx, y, tabW, tabH, 12, COLORS.line);
       ctx.fillStyle = active ? '#ffffff' : '#666666';
       ctx.font = font(800, 12);
@@ -1294,6 +1521,7 @@ export default class Main {
       ctx.textBaseline = 'middle';
       ctx.fillText(t.label, tx + tabW / 2, y + tabH / 2);
       ctx.textBaseline = 'alphabetic';
+      this.endPressTransform(tabPressed);
       this.addBtn(t.id, tx, y, tabW, tabH);
     }
     y += tabH + Math.round(12 * SCALE);
@@ -1404,8 +1632,10 @@ export default class Main {
       const sy = y + row * (cellH + gap);
       const unlocked = this.best >= s.need;
       const active = this.skin === s.id;
+      const skinId = `skin_${s.id}`;
+      const skinPressed = unlocked && this.beginPressTransform(sx, sy, cellW, cellH, skinId);
       ctx.globalAlpha = unlocked ? 1 : 0.4;
-      fillRound(sx, sy, cellW, cellH, 13, COLORS.paper);
+      fillRound(sx, sy, cellW, cellH, 13, skinPressed ? '#f0f0ec' : COLORS.paper);
       strokeRound(sx, sy, cellW, cellH, 13, active ? COLORS.ink : COLORS.line, active ? 1.5 : 1);
       ctx.beginPath();
       ctx.arc(sx + cellW / 2, sy + Math.round(30 * SCALE), Math.round(16 * SCALE), 0, Math.PI * 2);
@@ -1423,7 +1653,8 @@ export default class Main {
         sy + Math.round(68 * SCALE)
       );
       ctx.globalAlpha = 1;
-      if (unlocked) this.addBtn(`skin_${s.id}`, sx, sy, cellW, cellH);
+      this.endPressTransform(skinPressed);
+      if (unlocked) this.addBtn(skinId, sx, sy, cellW, cellH);
     }
   }
 
@@ -1609,7 +1840,7 @@ export default class Main {
     }
 
     // 限时倒计时（暂停时冻结）
-    if (this.gameState === 'playing' && this.mode === 'timed' && this.reviveCount <= 0) {
+    if (this.gameState === 'playing' && this.mode === 'timed' && this.reviveCountdown <= 0) {
       this.timedLeft -= dt;
       if (this.timedLeft <= 0) {
         this.timedLeft = 0;
@@ -1622,7 +1853,7 @@ export default class Main {
       !this.target &&
       this.spawnAt > 0 &&
       this.gameTime >= this.spawnAt &&
-      this.reviveCount <= 0
+      this.reviveCountdown <= 0
     ) {
       this.spawnTarget();
     }
@@ -1630,13 +1861,13 @@ export default class Main {
     // 对局目标：playing / paused / 复活倒计时中仍可渲染背景粒子
     if (
       (this.gameState === 'playing' || this.gameState === 'paused') &&
-      this.reviveCount <= 0
+      this.reviveCountdown <= 0
     ) {
       this.drawTarget();
     }
     this.drawParticles(dt);
 
-    if (this.gameState === 'playing' && this.reviveCount <= 0) {
+    if (this.gameState === 'playing' && this.reviveCountdown <= 0) {
       this.drawHud();
     } else if (this.gameState === 'paused') {
       // 暂停时仍画目标，再叠卡片
