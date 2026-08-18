@@ -2,8 +2,10 @@
  * 微信小游戏分享
  * 右上角菜单转发 + 游戏内主动调起转发
  */
-const DEFAULT_TITLE = '差一点 — 差一点点就完美';
-const INTRO_TITLE = '推荐你玩「差一点」：等待、判断、点击，越接近中心越高分';
+import { GAME_NAME, GAME_TAGLINE } from './config';
+
+const DEFAULT_TITLE = `${GAME_NAME} — ${GAME_TAGLINE}`;
+const INTRO_TITLE = `推荐你玩「${GAME_NAME}」：${GAME_TAGLINE}，越接近中心越高分`;
 
 let currentShare = {
   title: DEFAULT_TITLE,
@@ -83,7 +85,7 @@ export function shareHome() {
 export function shareScore(score, mode = 'classic') {
   const modeName = mode === 'timed' ? '限时' : mode === 'daily' ? '每日挑战' : '经典';
   return shareToFriend({
-    title: `我在「差一点」${modeName}模式得了 ${score} 分，来挑战一下？`,
+    title: `我在「${GAME_NAME}」${modeName}模式得了 ${score} 分，来挑战一下？`,
     query: `from=score&score=${score}&mode=${mode}`,
   });
 }
@@ -91,7 +93,7 @@ export function shareScore(score, mode = 'classic') {
 export function refreshMenuShare(score, mode) {
   if (score != null && score > 0) {
     setSharePayload({
-      title: `我在「差一点」得了 ${score} 分，差一点点就完美`,
+      title: `我在「${GAME_NAME}」得了 ${score} 分，来比一比？`,
       query: `from=menu&score=${score}&mode=${mode || 'classic'}`,
     });
   } else {

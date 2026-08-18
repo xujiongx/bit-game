@@ -46,6 +46,7 @@ import {
   getNickname,
   getPlayerId,
 } from './leaderboard';
+import { GAME_NAME, GAME_TAGLINE, GAME_HINT } from './config';
 
 const COLORS = {
   paper: '#ffffff',
@@ -1044,19 +1045,22 @@ export default class Main {
     const heroBottom = bottom - cardsBlockH - Math.round(8 * SCALE);
     const heroCenter = Math.min(H * 0.32, (top + 50 + heroBottom) / 2);
 
-    ctx.fillStyle = '#aaaaaa';
-    ctx.font = font(500, 9);
-    ctx.textAlign = 'center';
-    ctx.fillText('差一点点', W / 2, heroCenter - Math.round(52 * SCALE));
-
     ctx.fillStyle = COLORS.ink;
-    ctx.font = font(900, 56);
-    ctx.fillText('差一点', W / 2, heroCenter - Math.round(8 * SCALE));
+    ctx.textAlign = 'center';
+    // 完整提审名；过长时自动缩小，避免换行歧义
+    let titleSize = 40;
+    ctx.font = font(900, titleSize);
+    const titleMaxW = W - PAD * 2;
+    while (titleSize > 24 && ctx.measureText(GAME_NAME).width > titleMaxW) {
+      titleSize -= 2;
+      ctx.font = font(900, titleSize);
+    }
+    ctx.fillText(GAME_NAME, W / 2, heroCenter - Math.round(8 * SCALE));
 
     ctx.fillStyle = '#999999';
     ctx.font = font(400, 12);
-    ctx.fillText('等待 · 判断 · 点击', W / 2, heroCenter + Math.round(28 * SCALE));
-    ctx.fillText('越接近中心，得分越高', W / 2, heroCenter + Math.round(48 * SCALE));
+    ctx.fillText(GAME_TAGLINE, W / 2, heroCenter + Math.round(28 * SCALE));
+    ctx.fillText(GAME_HINT, W / 2, heroCenter + Math.round(48 * SCALE));
 
     const playH = Math.round(52 * SCALE);
     const playY = heroCenter + Math.round(68 * SCALE);
@@ -1434,7 +1438,7 @@ export default class Main {
   }
 
   drawIntroPanel() {
-    let y = this.drawPanelChrome('游戏介绍', '差一点点就完美。把玩法告诉好友一起挑战。');
+    let y = this.drawPanelChrome('游戏介绍', `${GAME_NAME}：${GAME_HINT}`);
     const boxH = Math.round(278 * SCALE);
     fillRound(PAD, y, W - PAD * 2, boxH, 16, COLORS.paper);
     strokeRound(PAD, y, W - PAD * 2, boxH, 16, COLORS.line);
